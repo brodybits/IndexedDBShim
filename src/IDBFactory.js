@@ -40,6 +40,8 @@
      * @param {number} version
      */
     IDBFactory.prototype.open = function(name, version) {
+        console.log('open with version: ' + version);
+
         var req = new idbModules.IDBOpenDBRequest();
         var calledDbCreateError = false;
 
@@ -67,7 +69,105 @@
         }
 
         function openDB(oldVersion) {
-            var db = window.openDatabase(name, 1, name, DEFAULT_DB_SIZE);
+            console.log('openDB oldVersion: ' + oldVersion);
+            //var db = window.openDatabase(name, 1, name, DEFAULT_DB_SIZE);
+
+            //* **
+            var isLocked = false;
+            var tq = [];
+            var tqnext = function() {
+              if (tq.length !== 0) {
+                console.log('start next');
+                isLocked = true;
+                tq.shift().start();
+              }
+            };
+
+            var x = new XMLHttpRequest();
+            x.open('POST', 'http://localhost:8000/', true);
+            x.onreadystatechange = function(ev) {
+              if (x.readyState === 4) {
+                if (x.status === 200) {
+                  console.log('open ok with response text: ' + x.responseText);
+                  tqnext();
+                }
+              }
+            };
+            x.onerror = function(e) {
+              console.log('open HTTP error: ' + JSON.stringify(e));
+            };
+            x.send(JSON.stringify({"op":"open","dbname":name}));
+
+            isLocked = true;
+
+            var db = {
+              transaction: function(f, ecb, okcb) {
+                console.log('starting transaction');
+                tq.push({
+                  start: function() {
+                    var eq = [];
+                    var l = false;
+                    var ln = function() {
+                      if (!l) {
+                        l = true;
+                        eq.shift().e();
+                      }
+                    };
+
+                    var tx = {
+                      executeSql: function(s, v, cb1, cb2) {
+                        console.log('execute sql: ' + s + ' v: ' + JSON.stringify(v));
+
+                        eq.push({
+                          e: function() {
+                            var x = new XMLHttpRequest();
+                            x.open('POST', 'http://localhost:8000/', true);
+                            x.onreadystatechange = function(ev) {
+                              if (x.readyState === 4) {
+                                if (x.status === 200) {
+                                  console.log('sql ok with response text: ' + x.responseText);
+                                  var r = JSON.parse(x.responseText);
+                                  if (!!cb1) {
+                                    //cb1(tx, {rows:[]});
+                                    cb1(tx, {
+                                      rows: {
+                                        length: r.rows.length,
+                                        item: function(i) {
+                                          return r.rows[i];
+                                        }
+                                      }
+                                    });
+                                  }
+                                  l = false;
+                                  if (eq.length !== 0) {
+                                    ln();
+                                  } else {
+                                    isLocked = false;
+                                    if (!!okcb) {
+                                      okcb();
+                                    }
+                                    tqnext();
+                                  }
+                                }
+                              }
+                            };
+                            x.onerror = function(e) {
+                              console.log('execute HTTP error: ' + JSON.stringify(e));
+                            };
+                            x.send(JSON.stringify({"op":"exec","dbname":name,"sql":s,"params":v}));
+                          }
+                        });
+                        ln();
+                      }
+                    };
+                    f(tx);
+                  }
+                });
+                tqnext();
+              }
+            };
+            // ** */
+
             req.readyState = "done";
             if (typeof version === "undefined") {
                 version = oldVersion || 1;
@@ -81,8 +181,11 @@
             db.transaction(function(tx) {
                 tx.executeSql("CREATE TABLE IF NOT EXISTS __sys__ (name VARCHAR(255), keyPath VARCHAR(255), autoInc BOOLEAN, indexList BLOB)", [], function() {
                     tx.executeSql("SELECT * FROM __sys__", [], function(tx, data) {
+                        console.log('cb1');
                         var e = idbModules.util.createEvent("success");
                         req.source = req.result = new idbModules.IDBDatabase(db, name, version, data);
+                        //console.log('cb2');
+                        console.log('oldVersion: ' + oldVersion + 'version: ' + version);
                         if (oldVersion < version) {
                             // DB Upgrade in progress
                             sysdb.transaction(function(systx) {
@@ -96,6 +199,7 @@
                                         success();
                                     });
                                     req.transaction.__oncomplete = function() {
+                                        console.log('s1');
                                         req.transaction = null;
                                         var e = idbModules.util.createEvent("success");
                                         idbModules.util.callback("onsuccess", req, e);
@@ -103,6 +207,7 @@
                                 }, dbCreateError);
                             }, dbCreateError);
                         } else {
+                            console.log('s2');
                             idbModules.util.callback("onsuccess", req, e);
                         }
                     }, dbCreateError);

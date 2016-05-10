@@ -1,0 +1,45 @@
+<head>
+</head>
+<body>
+<script src="dist/indexeddbshim.js">
+</script>
+<script>
+
+//window.indexedDB = window.shimIndexedDB;
+var indexedDB = window.shimIndexedDB;
+window.shimIndexedDB.__useShim();
+window.shimIndexedDB.__debug(true);
+console.log("Starting Tests with shimIndexedDB");
+
+//var or = indexedDB.open('test-392fe792-d384-490d-878b-4624a14b6126', 3);
+var or = window.shimIndexedDB.open('test-392fe792-d384-490d-878b-4624a14b6126', 10);
+
+or.onupgradeneeded = function(ev) {
+  console.log('onupgradeneeded callback');
+  var mydb = ev.target.result;
+  mydb.createObjectStore('st1');
+};
+
+var check1 = function(mydb) {
+  var t2 = mydb.transaction(['st1'], 'readonly');
+  var st = t2.objectStore('st1');
+  var r2 = st.get('a1');
+  r2.onsuccess = function() {
+    console.log('get result: ' + JSON.stringify(r2.result));
+  };
+};
+
+or.onsuccess = function(ev) {
+  console.log('open success');
+  var mydb = ev.target.result;
+  var t1 = mydb.transaction(['st1'], 'readwrite');
+  var st = t1.objectStore('st1');
+  var r = st.add({a:1}, 'a1');
+  r.onsuccess = function(ev) {
+    console.log('added ok');
+    check1(mydb);
+  };
+};
+
+</script>
+</body>
